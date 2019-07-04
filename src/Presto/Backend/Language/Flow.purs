@@ -28,11 +28,13 @@ import Cache.Multi (Multi)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Aff (Aff)
 import Control.Monad.Eff.Exception (Error, error, message)
+import Control.Monad.Except (runExcept) as E
 import Control.Monad.Free (Free, liftF)
-import Data.Either (Either(..))
+import Data.Either (Either(..), note, hush, isLeft)
 import Data.Exists (Exists, mkExists)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Foreign (Foreign)
-import Data.Foreign.Class (class Decode, class Encode)
+import Data.Foreign.Class (class Encode, class Decode, encode, decode)
 import Data.Foreign.Generic (encodeJSON)
 import Data.Lazy (defer)
 import Data.Maybe (Maybe(..))
@@ -48,13 +50,11 @@ import Presto.Backend.Playback.Entries as Playback
 import Presto.Backend.Types.API (class RestEndpoint, Headers, makeRequest)
 import Presto.Backend.DB.Types (DBError(..), toDBMaybeResult, fromDBMaybeResult)
 import Presto.Core.Types.Language.Interaction (Interaction)
+import Presto.Backend.Language.Types.DB (SqlConn, MockedSqlConn, SequelizeConn)
 import Sequelize.Class (class Model)
 import Sequelize.Types (Conn, Instance, SEQUELIZE)
-
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
-import Control.Monad.Except (runExcept) as E
-import Data.Either (Either(..), note, hush, isLeft)
-import Data.Foreign.Class (class Encode, class Decode, encode, decode)
+import Presto.Backend.DB.Mock.Types as SqlDBMock
+import Presto.Backend.DB.Mock.Actions as SqlDBMock
 
 data BackendFlowCommands next st rt s =
       Ask (rt -> next)
@@ -72,13 +72,20 @@ data BackendFlowCommands next st rt s =
         (Playback.RRItemDict Playback.DoAffEntry s)
         (s -> next)
 
-    | ThrowException String (s -> next)
+    | ThrowException String
 
-    | RunDB (forall eff. Aff (sequelize :: SEQUELIZE | eff) (EitherEx DBError s))
+    | RunDB String
+        (forall eff. Conn -> Aff (sequelize :: SEQUELIZE | eff) (EitherEx DBError s))
+        (MockedSqlConn -> SqlDBMock.DBActionDict)
         (Playback.RRItemDict Playback.RunDBEntry (EitherEx DBError s))
         (EitherEx DBError s -> next)
 
-    | GetDBConn String (Conn -> next)
+    -- | RunSqlDB ()
+    --     (Playback.RRItemDict Playback.RunDBEntry (EitherEx DBError s))
+    --     (EitherEx DBError s -> next)
+
+    | GetDBConn String (SqlConn -> next)
+
     | GetCacheConn String (SimpleConn -> next)
     | Log String s (Unit -> next)
 
@@ -142,7 +149,7 @@ modify :: forall st rt. (st -> st) -> BackendFlow st rt st
 modify fst = wrap $ Modify fst id
 
 throwException :: forall st rt a. String -> BackendFlow st rt a
-throwException errorMessage = wrap $ ThrowException errorMessage id
+throwException errorMessage = wrap $ ThrowException errorMessage
 
 doAff :: forall st rt a. (forall eff. BackendAff eff a) -> BackendFlow st rt a
 doAff aff = wrap $ DoAff aff id
@@ -156,16 +163,15 @@ doAffRR
 doAffRR aff = wrap $ DoAffRR aff (Playback.mkEntryDict Playback.mkDoAffEntry) id
 
 -- TODO: TASK: add options, model and other input params to recording so it they be compared.
--- TODO: Think what to do with getDBCon.
 
 findOne
   :: forall model st rt
    . Model model
   => String -> Options model -> BackendFlow st rt (Either Error (Maybe model))
 findOne dbName options = do
-  conn <- getDBConn dbName
-  eResEx <- wrap $ RunDB
-    (toDBMaybeResult <$> DB.findOne conn options)
+  eResEx <- wrap $ RunDB dbName
+    (\conn     -> toDBMaybeResult <$> DB.findOne conn options)
+    (\connMock -> SqlDBMock.mkDbActionDict $ SqlDBMock.mkFindOne dbName)
     (Playback.mkEntryDict $ Playback.mkRunDBEntry dbName "findOne")
     id
   pure $ fromDBMaybeResult eResEx
@@ -175,9 +181,9 @@ findAll
    . Model model
   => String -> Options model -> BackendFlow st rt (Either Error (Array model))
 findAll dbName options = do
-  conn <- getDBConn dbName
-  eResEx <- wrap $ RunDB
-    (toCustomEitherEx <$> DB.findAll conn options)
+  eResEx <- wrap $ RunDB dbName
+    (\conn -> toCustomEitherEx <$> DB.findAll conn options)
+    (\connMock -> SqlDBMock.mkDbActionDict $ SqlDBMock.mkFindAll dbName)
     (Playback.mkEntryDict $ Playback.mkRunDBEntry dbName "findAll")
     id
   pure $ fromCustomEitherEx eResEx
@@ -188,50 +194,50 @@ query
   => Decode a
   => String -> String -> BackendFlow st rt (Either Error (Array a))
 query dbName rawq = do
-  conn <- getDBConn dbName
-  eResEx <- wrap $ RunDB
-    (toCustomEitherEx <$> DB.query conn rawq)
+  eResEx <- wrap $ RunDB dbName
+    (\conn -> toCustomEitherEx <$> DB.query conn rawq)
+    (\connMock -> SqlDBMock.mkDbActionDict $ SqlDBMock.mkQuery dbName)
     (Playback.mkEntryDict $ Playback.mkRunDBEntry dbName "query")
     id
   pure $ fromCustomEitherEx eResEx
 
 create :: forall model st rt. Model model => String -> model -> BackendFlow st rt (Either Error (Maybe model))
 create dbName model = do
-  conn <- getDBConn dbName
-  eResEx <- wrap $ RunDB
-    (toDBMaybeResult <$> DB.create conn model)
+  eResEx <- wrap $ RunDB dbName
+    (\conn -> toDBMaybeResult <$> DB.create conn model)
+    (\connMock -> SqlDBMock.mkDbActionDict $ SqlDBMock.mkCreate dbName)
     (Playback.mkEntryDict $ Playback.mkRunDBEntry dbName "create")
     id
   pure $ fromDBMaybeResult eResEx
 
 createWithOpts :: forall model st rt. Model model => String -> model -> Options model -> BackendFlow st rt (Either Error (Maybe model))
 createWithOpts dbName model options = do
-  conn <- getDBConn dbName
-  eResEx <- wrap $ RunDB
-    (toDBMaybeResult <$> DB.createWithOpts conn model options)
+  eResEx <- wrap $ RunDB dbName
+    (\conn -> toDBMaybeResult <$> DB.createWithOpts conn model options)
+    (\connMock -> SqlDBMock.mkDbActionDict $ SqlDBMock.mkCreateWithOpts dbName)
     (Playback.mkEntryDict $ Playback.mkRunDBEntry dbName "createWithOpts")
     id
   pure $ fromDBMaybeResult eResEx
 
 update :: forall model st rt. Model model => String -> Options model -> Options model -> BackendFlow st rt (Either Error (Array model))
 update dbName updateValues whereClause = do
-  conn <- getDBConn dbName
-  eResEx <- wrap $ RunDB
-    (toCustomEitherEx <$> DB.update conn updateValues whereClause)
+  eResEx <- wrap $ RunDB dbName
+    (\conn -> toCustomEitherEx <$> DB.update conn updateValues whereClause)
+    (\connMock -> SqlDBMock.mkDbActionDict $ SqlDBMock.mkUpdate dbName)
     (Playback.mkEntryDict $ Playback.mkRunDBEntry dbName "update")
     id
   pure $ fromCustomEitherEx eResEx
 
 delete :: forall model st rt. Model model => String -> Options model -> BackendFlow st rt (Either Error Int)
 delete dbName options = do
-  conn <- getDBConn dbName
-  eResEx <- wrap $ RunDB
-    (toCustomEitherEx <$> DB.delete conn options)
+  eResEx <- wrap $ RunDB dbName
+    (\conn -> toCustomEitherEx <$> DB.delete conn options)
+    (\connMock -> SqlDBMock.mkDbActionDict $ SqlDBMock.mkDelete dbName)
     (Playback.mkEntryDict $ Playback.mkRunDBEntry dbName "delete")
     id
   pure $ fromCustomEitherEx eResEx
 
-getDBConn :: forall st rt. String -> BackendFlow st rt Conn
+getDBConn :: forall st rt. String -> BackendFlow st rt SqlConn
 getDBConn dbName = wrap $ GetDBConn dbName id
 
 getCacheConn :: forall st rt. String -> BackendFlow st rt SimpleConn
