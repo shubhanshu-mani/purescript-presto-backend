@@ -46,7 +46,7 @@ import Data.UUID (genUUID)
 import Presto.Backend.DB.Mock.Types (DBActionDict)
 import Presto.Backend.Flow (BackendFlow, BackendFlowCommands(..), BackendFlowCommandsWrapper, BackendFlowWrapper(..))
 import Presto.Backend.Language.Types.DB (SqlConn(..))
-import Presto.Backend.Language.Types.EitherEx (fromEitherEx)
+import Presto.Backend.Language.Types.EitherEx (EitherEx(..), eitherEx, fromEitherEx, toEitherEx)
 import Presto.Backend.Language.Types.MaybeEx (fromMaybeEx, toMaybeEx)
 import Presto.Backend.Language.Types.UnitEx (UnitEx(UnitEx))
 import Presto.Backend.Playback.Entries (mkThrowExceptionEntry)
@@ -199,12 +199,13 @@ interpret brt@(BackendRuntime rt) (Fork flow flowGUID rrItemDict next) = do
 
   pure $ next UnitEx
 
-interpret brt@(BackendRuntime rt) (ParSequence aflow next) = do
+interpret brt@(BackendRuntime rt) (ParSequence aflow rrItemDict next) = do
   st ← R.lift S.get
   rt ← R.ask
-  (next <<< map (either (Left <<< fst) (Right <<< fst))) <$> (lift3 $ parSequence $ foldl (flowToAff st rt) [] aflow)
+  res <- withRunModeClassless brt rrItemDict ((map (eitherEx (LeftEx <<< fst) (RightEx <<< fst))) <$> (lift3 $ parSequence $ foldl (flowToAff st rt) [] aflow))
+  pure $ next $ res 
   where
-      flowToAff st rt acc flow = E.runExceptT (S.runStateT (R.runReaderT (runBackend brt flow) rt) st) : acc
+      flowToAff st rt acc flow =  (liftM1 toEitherEx  (E.runExceptT (S.runStateT (R.runReaderT (runBackend brt flow) rt) st))) : acc
 
 interpret brt (RunSysCmd cmd rrItemDict next) = do
   res <- withRunModeClassless brt rrItemDict

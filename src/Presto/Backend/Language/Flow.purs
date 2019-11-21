@@ -51,8 +51,10 @@ import Presto.Backend.Language.Types.EitherEx (EitherEx, fromCustomEitherEx, fro
 import Presto.Backend.Language.Types.KVDB (Multi)
 import Presto.Backend.Language.Types.KVDB (getKVDBName) as KVDB
 import Presto.Backend.Language.Types.MaybeEx (MaybeEx)
+import Presto.Backend.Language.Types.ParSequence (ParError(..))
 import Presto.Backend.Language.Types.UnitEx (UnitEx, fromUnitEx, toUnitEx)
-import Presto.Backend.Playback.Entries (CallAPIEntry, GenerateGUIDEntry, DoAffEntry, ForkFlowEntry, GetDBConnEntry, GetKVDBConnEntry, LogEntry, GetOptionEntry, RunDBEntry, RunKVDBEitherEntry, RunKVDBSimpleEntry, RunSysCmdEntry, SetOptionEntry, mkCallAPIEntry, mkDoAffEntry, mkForkFlowEntry, mkGetDBConnEntry, mkGetKVDBConnEntry, mkLogEntry, mkGetOptionEntry, mkRunDBEntry, mkRunKVDBEitherEntry, mkRunKVDBSimpleEntry, mkRunSysCmdEntry, mkGenerateGUIDEntry, mkSetOptionEntry) as Playback
+import Presto.Backend.Playback.Entries ((<$$>))
+import Presto.Backend.Playback.Entries (CallAPIEntry, GenerateGUIDEntry, DoAffEntry, ForkFlowEntry, GetDBConnEntry, GetKVDBConnEntry, LogEntry, GetOptionEntry, RunDBEntry, RunKVDBEitherEntry, RunKVDBSimpleEntry, RunSysCmdEntry, SetOptionEntry, ParSequenceEntry, mkParSequenceEntry, mkCallAPIEntry, mkDoAffEntry, mkForkFlowEntry, mkGetDBConnEntry, mkGetKVDBConnEntry, mkLogEntry, mkGetOptionEntry, mkRunDBEntry, mkRunKVDBEitherEntry, mkRunKVDBSimpleEntry, mkRunSysCmdEntry, mkGenerateGUIDEntry, mkSetOptionEntry) as Playback
 import Presto.Backend.Playback.Types (RRItemDict, mkEntryDict) as Playback
 import Presto.Backend.Runtime.Common (jsonStringify)
 import Presto.Backend.Types (BackendAff)
@@ -96,7 +98,8 @@ data BackendFlowCommands next st rt s
         (String -> next)
 
     | ParSequence (Array (BackendFlow st rt s))
-        (Array (Either Error s) → next)
+        (Playback.RRItemDict Playback.ParSequenceEntry (Array (EitherEx ParError s)))
+        (Array (EitherEx ParError s) → next)
 
     | ThrowException String
 
@@ -262,8 +265,18 @@ forkFlow' description flow = do
 forkFlow :: forall st rt a. BackendFlow st rt a -> BackendFlow st rt Unit
 forkFlow = forkFlow' ""
 
-parSequence :: ∀ st rt a. Array (BackendFlow st rt a) → BackendFlow st rt (Array (Either Error a))
-parSequence tbf = wrap $ ParSequence tbf id
+parSequence :: ∀ st rt a.
+  Encode a
+  => Decode a
+  => Array (BackendFlow st rt a)   
+  → BackendFlow st rt (Array (EitherEx ParError a))
+parSequence tbf = wrap $ ParSequence 
+                  tbf 
+                  (Playback.mkEntryDict
+                    "Parsequence"
+                    (Playback.mkParSequenceEntry (encode <$> tbf)))
+                  id
+
 
 runSysCmd :: forall st rt. String -> BackendFlow st rt String
 runSysCmd cmd =
