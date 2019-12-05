@@ -23,6 +23,7 @@ module Presto.Backend.Playback.Entries where
 
 import Prelude
 
+import Control.Monad.Eff.Exception (Error)
 import Control.Monad.Except (runExcept) as E
 import Data.Either (Either(..), hush, either)
 import Data.Foreign (Foreign, ForeignError(..))
@@ -32,6 +33,7 @@ import Data.Generic.Rep (class Generic)
 import Data.Generic.Rep.Show as GShow
 import Data.List.Types (NonEmptyList(..))
 import Data.Maybe (Maybe(..))
+import Data.Monoid (mempty)
 import Presto.Backend.Language.Types.DB (DBError, KVDBConn(MockedKVDB, Redis), MockedKVDBConn(MockedKVDBConn), MockedSqlConn(MockedSqlConn), SqlConn(MockedSql, Sequelize))
 import Presto.Backend.Language.Types.EitherEx (EitherEx(..), toEitherEx)
 import Presto.Backend.Language.Types.MaybeEx (MaybeEx)
@@ -117,8 +119,8 @@ data RunKVDBSimpleEntry = RunKVDBSimpleEntry
   }
 data ParSequenceEntry = ParSequenceEntry
   {
-    jsonRequest :: Array Foreign
-  , jsonResult  :: Array (EitherEx ParError Foreign)
+    description :: String 
+  , parGUID  :: String
   }
 
 mkSetOptionEntry :: String -> String -> UnitEx -> SetOptionEntry
@@ -156,17 +158,17 @@ mkCallAPIEntry
   -> CallAPIEntry
 mkCallAPIEntry jReqF aRes = CallAPIEntry
   { jsonRequest : jReqF unit
-  --, jsonResult  : encode <$> aRes
+  , jsonResult  : encode <$> aRes
   }
 
 mkParSequenceEntry
   :: forall b
     . Encode b
   => Decode b
-  => Array b
+  => String -> String -> Array (EitherEx Error b)
   -> ParSequenceEntry
-mkParSequenceEntry jReqF = ParSequenceEntry
-  { jsonRequest : encode <$> jReqF
+mkParSequenceEntry description parGUID _  = ParSequenceEntry
+  { description , parGUID 
   }
 
 
@@ -460,37 +462,51 @@ instance rrItemRunKVDBSimpleEntry :: RRItem RunKVDBSimpleEntry where
 instance mockedResultRunKVDBSimpleEntry :: Decode b => MockedResult RunKVDBSimpleEntry b where
     parseRRItem (RunKVDBSimpleEntry r) = hush $ E.runExcept $ decode r.jsonResult
 
+-- derive instance genericParSequenceEntry :: Generic ParSequenceEntry _
+-- instance eqParSequenceEntry :: Eq ParSequenceEntry where
+--   eq e1 e2 = encodeJSON e1 == encodeJSON e2
+-- instance showParSequenceEntry   :: Show ParSequenceEntry where show = encodeJSON
+-- instance decodeParSequenceEntry :: Decode ParSequenceEntry where decode = genericDecode defaultOptions
+-- instance encodeParSequenceEntry :: Encode ParSequenceEntry where encode = genericEncode defaultOptions
+-- instance rrItemParSequenceEntry :: RRItem ParSequenceEntry where
+--   toRecordingEntry rrItem idx mode = (RecordingEntry idx mode "ParSequenceEntry") <<< encodeJSON $ rrItem
+--   fromRecordingEntry (RecordingEntry idx mode entryName re) = hush $ E.runExcept $ decodeJSON re
+--   getTag   _ = "ParSequenceEntry"
+-- instance mockedResultParSequenceEntry :: Decode b => MockedResult ParSequenceEntry (Array (EitherEx ParError b)) where
+--   parseRRItem (ParSequenceEntry r) = Just $
+--     runDecodeMock <$> r.jsonResult
+
+-- runDecodeMock ::forall b. Decode b => EitherEx ParError Foreign -> EitherEx ParError b
+-- runDecodeMock = case _ of
+--   LeftEx  errResp -> LeftEx errResp
+--   RightEx strResp -> 
+--     either
+--       (const (LeftEx $ ParError "Decode Failed"))
+--       RightEx
+--       $ E.runExcept $ decode strResp 
+-- -- instance mockedResultParSequenceEntry
+-- --   :: Decode b => MockedResult ParSequenceEntry (EitherEx DBError b) where
+-- --   parseRRItem (ParSequenceEntry dbe) = do
+-- --     eResult <- (case _ of
+-- --       LeftEx  errResp -> Just $ LeftEx errResp
+-- --       RightEx strResp -> do
+-- --           (resultEx :: b) <- hush $ E.runExcept $ decode strResp
+-- --           Just $ RightEx resultEx) <$$> dbe.jsonResult
+-- --     pure eResult
+
 derive instance genericParSequenceEntry :: Generic ParSequenceEntry _
-instance eqParSequenceEntry :: Eq ParSequenceEntry where
-  eq e1 e2 = encodeJSON e1 == encodeJSON e2
-instance showParSequenceEntry   :: Show ParSequenceEntry where show = encodeJSON
+derive instance eqParSequenceEntry :: Eq ParSequenceEntry
 instance decodeParSequenceEntry :: Decode ParSequenceEntry where decode = genericDecode defaultOptions
 instance encodeParSequenceEntry :: Encode ParSequenceEntry where encode = genericEncode defaultOptions
+instance showParSequenceEntry  :: Show ParSequenceEntry where show = GShow.genericShow
+
 instance rrItemParSequenceEntry :: RRItem ParSequenceEntry where
   toRecordingEntry rrItem idx mode = (RecordingEntry idx mode "ParSequenceEntry") <<< encodeJSON $ rrItem
   fromRecordingEntry (RecordingEntry idx mode entryName re) = hush $ E.runExcept $ decodeJSON re
   getTag   _ = "ParSequenceEntry"
-instance mockedResultParSequenceEntry :: Decode b => MockedResult ParSequenceEntry (Array (EitherEx ParError b)) where
-  parseRRItem (ParSequenceEntry r) = Just $
-    runDecodeMock <$> r.jsonResult
 
-runDecodeMock ::forall b. Decode b => EitherEx ParError Foreign -> EitherEx ParError b
-runDecodeMock = case _ of
-  LeftEx  errResp -> LeftEx errResp
-  RightEx strResp -> 
-    either
-      (const (LeftEx $ ParError "Decode Failed"))
-      RightEx
-      $ E.runExcept $ decode strResp 
--- instance mockedResultParSequenceEntry
---   :: Decode b => MockedResult ParSequenceEntry (EitherEx DBError b) where
---   parseRRItem (ParSequenceEntry dbe) = do
---     eResult <- (case _ of
---       LeftEx  errResp -> Just $ LeftEx errResp
---       RightEx strResp -> do
---           (resultEx :: b) <- hush $ E.runExcept $ decode strResp
---           Just $ RightEx resultEx) <$$> dbe.jsonResult
---     pure eResult
+instance mockedResultParSequenceEntry :: Decode b => MockedResult ParSequenceEntry (Array (EitherEx Error b)) where
+  parseRRItem _ = Just mempty
 
 
 mapmap :: forall f g a b. Functor f => Functor g =>

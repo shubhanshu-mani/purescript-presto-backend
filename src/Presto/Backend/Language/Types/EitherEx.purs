@@ -36,6 +36,7 @@ import Prelude
 import Data.Either (Either(..), either)
 import Data.Foreign.Class (class Decode, class Encode)
 import Data.Generic.Rep (class Generic)
+--import Presto.Backend.Language.Types.ParSequence (ParError(..))
 import Presto.Core.Utils.Encoding (defaultEncode, defaultDecode)
 
 data EitherEx l r
@@ -55,6 +56,9 @@ fromEitherEx = eitherEx Left Right
 
 toEitherEx :: forall l r. Either l r -> EitherEx l r
 toEitherEx = either LeftEx RightEx
+
+-- toParEitherEx :: forall l r. Either l r -> Either ParError r
+-- toParEitherEx = either ParError RightEx 
 
 fromCustomEitherExF
   :: forall a b err1 err2

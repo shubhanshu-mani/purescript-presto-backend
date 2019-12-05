@@ -51,7 +51,7 @@ import Presto.Backend.Language.Types.EitherEx (EitherEx, fromCustomEitherEx, fro
 import Presto.Backend.Language.Types.KVDB (Multi)
 import Presto.Backend.Language.Types.KVDB (getKVDBName) as KVDB
 import Presto.Backend.Language.Types.MaybeEx (MaybeEx)
-import Presto.Backend.Language.Types.ParSequence (ParError(..))
+import Presto.Backend.Language.Types.ParSequence (ParError)
 import Presto.Backend.Language.Types.UnitEx (UnitEx, fromUnitEx, toUnitEx)
 import Presto.Backend.Playback.Entries ((<$$>))
 import Presto.Backend.Playback.Entries (CallAPIEntry, GenerateGUIDEntry, DoAffEntry, ForkFlowEntry, GetDBConnEntry, GetKVDBConnEntry, LogEntry, GetOptionEntry, RunDBEntry, RunKVDBEitherEntry, RunKVDBSimpleEntry, RunSysCmdEntry, SetOptionEntry, ParSequenceEntry, mkParSequenceEntry, mkCallAPIEntry, mkDoAffEntry, mkForkFlowEntry, mkGetDBConnEntry, mkGetKVDBConnEntry, mkLogEntry, mkGetOptionEntry, mkRunDBEntry, mkRunKVDBEitherEntry, mkRunKVDBSimpleEntry, mkRunSysCmdEntry, mkGenerateGUIDEntry, mkSetOptionEntry) as Playback
@@ -98,8 +98,8 @@ data BackendFlowCommands next st rt s
         (String -> next)
 
     | ParSequence (Array (BackendFlow st rt s))
-        (Playback.RRItemDict Playback.ParSequenceEntry (Array (EitherEx ParError s)))
-        (Array (EitherEx ParError s) → next)
+        (Playback.RRItemDict Playback.ParSequenceEntry (Array (EitherEx Error s)))
+        (Array (EitherEx Error s) → next)
 
     | ThrowException String
 
@@ -269,12 +269,17 @@ parSequence :: ∀ st rt a.
   Encode a
   => Decode a
   => Array (BackendFlow st rt a)   
-  → BackendFlow st rt (Array (EitherEx ParError a))
-parSequence tbf = wrap $ ParSequence 
+  → BackendFlow st rt (Array (EitherEx Error a))
+parSequence tbf = do
+  let description = "PAR"
+  parGUID <- generateGUID' description
+  unless (null description) $ log "forkFlow" $ "Flow forked. Description: " <> description <> " GUID: " <> parGUID
+  when   (null description) $ log "forkFlow" $ "Flow forked. GUID: " <> parGUID
+  wrap $ ParSequence 
                   tbf 
                   (Playback.mkEntryDict
-                    "Parsequence"
-                    (Playback.mkParSequenceEntry (encode <$> tbf)))
+                    ("description: " <> description <> " GUID: " <> parGUID)
+                    (Playback.mkParSequenceEntry description parGUID))
                   id
 
 

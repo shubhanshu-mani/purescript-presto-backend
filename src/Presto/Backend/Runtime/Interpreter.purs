@@ -58,6 +58,7 @@ import Presto.Backend.Runtime.KVDBInterpreter (runKVDB)
 import Presto.Backend.Runtime.Types (InterpreterMT, InterpreterMT', BackendRuntime(..), RunningMode(..))
 import Presto.Backend.Runtime.Types as X
 import Presto.Backend.SystemCommands (runSysCmd)
+import Presto.Backend.Language.Types.ParSequence(toParResult)
 
 forkF :: forall eff rt st a. BackendRuntime -> BackendFlow st rt a -> InterpreterMT rt st (Tuple Error st) eff Unit
 forkF brt flow = do
@@ -203,7 +204,7 @@ interpret brt@(BackendRuntime rt) (ParSequence aflow rrItemDict next) = do
   st ← R.lift S.get
   rt ← R.ask
   res <- withRunModeClassless brt rrItemDict ((map (eitherEx (LeftEx <<< fst) (RightEx <<< fst))) <$> (lift3 $ parSequence $ foldl (flowToAff st rt) [] aflow))
-  pure $ next $ res 
+  pure $ next $  res 
   where
       flowToAff st rt acc flow =  (liftM1 toEitherEx  (E.runExceptT (S.runStateT (R.runReaderT (runBackend brt flow) rt) st))) : acc
 

@@ -45,11 +45,11 @@ toParError = ParError <<< message
 fromParError :: ParError -> Error
 fromParError (ParError strError) = error strError
 
-toDBMaybeResult :: forall a. Either Error (Maybe a) -> EitherEx ParError (MaybeEx a)
-toDBMaybeResult = either (LeftEx <<< toParError) (RightEx <<< toMaybeEx)
+toParResult :: forall a. Either Error a -> EitherEx ParError a
+toParResult = either (LeftEx <<< toParError) RightEx
 
-fromDBMaybeResult :: forall a. EitherEx ParError (MaybeEx a) -> Either Error (Maybe a)
-fromDBMaybeResult = eitherEx (Left <<< fromParError) (Right <<< fromMaybeEx)
+fromParResult :: forall a. EitherEx ParError (MaybeEx a) -> Either Error (Maybe a)
+fromParResult = eitherEx (Left <<< fromParError) (Right <<< fromMaybeEx)
 
 
 derive instance genericParError :: Generic ParError _
