@@ -24,12 +24,12 @@ module Presto.Backend.Language.Types.ParSequence where
 import Prelude
 
 import Control.Monad.Eff.Exception (Error, error, message)
+import Data.Either (Either(..), either)
 import Data.Foreign.Class (class Decode, class Encode)
 import Data.Generic.Rep (class Generic)
 import Data.Generic.Rep.Eq as GEq
-import Data.Generic.Rep.Show as GShow
 import Data.Generic.Rep.Ord as GOrd
-import Data.Either (Either(..), either)
+import Data.Generic.Rep.Show as GShow
 import Data.Maybe (Maybe)
 import Presto.Backend.Language.Types.EitherEx (class CustomEitherEx, EitherEx(RightEx, LeftEx), eitherEx)
 import Presto.Backend.Language.Types.MaybeEx (MaybeEx, fromMaybeEx, toMaybeEx)
@@ -45,11 +45,11 @@ toParError = ParError <<< message
 fromParError :: ParError -> Error
 fromParError (ParError strError) = error strError
 
-toDBMaybeResult :: forall a. Either Error (Maybe a) -> EitherEx ParError (MaybeEx a)
-toDBMaybeResult = either (LeftEx <<< toParError) (RightEx <<< toMaybeEx)
+toParseqMaybeResult :: forall a. Either Error (Maybe a) -> EitherEx ParError (MaybeEx a)
+toParseqMaybeResult = either (LeftEx <<< toParError) (RightEx <<< toMaybeEx)
 
-fromDBMaybeResult :: forall a. EitherEx ParError (MaybeEx a) -> Either Error (Maybe a)
-fromDBMaybeResult = eitherEx (Left <<< fromParError) (Right <<< fromMaybeEx)
+fromParseqMaybeResult :: forall a. EitherEx ParError (MaybeEx a) -> Either Error (Maybe a)
+fromParseqMaybeResult = eitherEx (Left <<< fromParError) (Right <<< fromMaybeEx)
 
 
 derive instance genericParError :: Generic ParError _

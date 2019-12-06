@@ -24,16 +24,15 @@ module Presto.Backend.Playback.Entries where
 import Prelude
 
 import Control.Monad.Except (runExcept) as E
-import Data.Either (Either(..), hush, either)
-import Data.Foreign (Foreign, ForeignError(..))
+import Data.Either (hush, either)
+import Data.Foreign (Foreign)
 import Data.Foreign.Class (class Encode, class Decode, encode, decode)
 import Data.Foreign.Generic (defaultOptions, genericDecode, genericEncode, encodeJSON, decodeJSON)
 import Data.Generic.Rep (class Generic)
 import Data.Generic.Rep.Show as GShow
-import Data.List.Types (NonEmptyList(..))
 import Data.Maybe (Maybe(..))
 import Presto.Backend.Language.Types.DB (DBError, KVDBConn(MockedKVDB, Redis), MockedKVDBConn(MockedKVDBConn), MockedSqlConn(MockedSqlConn), SqlConn(MockedSql, Sequelize))
-import Presto.Backend.Language.Types.EitherEx (EitherEx(..), toEitherEx)
+import Presto.Backend.Language.Types.EitherEx (EitherEx(RightEx, LeftEx))
 import Presto.Backend.Language.Types.MaybeEx (MaybeEx)
 import Presto.Backend.Language.Types.ParSequence (ParError(..))
 import Presto.Backend.Language.Types.UnitEx (UnitEx(..))
@@ -480,16 +479,6 @@ runDecodeMock = case _ of
       (const (LeftEx $ ParError "Decode Failed"))
       RightEx
       $ E.runExcept $ decode strResp 
--- instance mockedResultParSequenceEntry
---   :: Decode b => MockedResult ParSequenceEntry (EitherEx DBError b) where
---   parseRRItem (ParSequenceEntry dbe) = do
---     eResult <- (case _ of
---       LeftEx  errResp -> Just $ LeftEx errResp
---       RightEx strResp -> do
---           (resultEx :: b) <- hush $ E.runExcept $ decode strResp
---           Just $ RightEx resultEx) <$$> dbe.jsonResult
---     pure eResult
-
 
 mapmap :: forall f g a b. Functor f => Functor g =>
   (a -> b) -> f (g a) -> f (g b)
