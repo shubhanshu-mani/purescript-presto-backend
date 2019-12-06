@@ -116,9 +116,7 @@ data RunKVDBSimpleEntry = RunKVDBSimpleEntry
   , jsonResult :: Foreign
   }
 data ParSequenceEntry = ParSequenceEntry
-  {
-    jsonRequest :: Array Foreign
-  , jsonResult  :: Array (EitherEx ParError Foreign)
+  { jsonResult  :: Array (EitherEx ParError Foreign)
   }
 
 mkSetOptionEntry :: String -> String -> UnitEx -> SetOptionEntry
@@ -156,17 +154,17 @@ mkCallAPIEntry
   -> CallAPIEntry
 mkCallAPIEntry jReqF aRes = CallAPIEntry
   { jsonRequest : jReqF unit
-  --, jsonResult  : encode <$> aRes
+  , jsonResult  : encode <$> aRes
   }
 
 mkParSequenceEntry
   :: forall b
     . Encode b
   => Decode b
-  => Array b
+  => Array (EitherEx ParError b)
   -> ParSequenceEntry
-mkParSequenceEntry jReqF = ParSequenceEntry
-  { jsonRequest : encode <$> jReqF
+mkParSequenceEntry output = ParSequenceEntry
+  { jsonResult : encode <$$> output
   }
 
 

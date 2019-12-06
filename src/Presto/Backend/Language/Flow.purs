@@ -272,9 +272,7 @@ parSequence :: ∀ st rt a.
   → BackendFlow st rt (Array (EitherEx ParError a))
 parSequence tbf = wrap $ ParSequence 
                   tbf 
-                  (Playback.mkEntryDict
-                    "Parsequence"
-                    (Playback.mkParSequenceEntry (encode <$> tbf)))
+                  (Playback.mkEntryDict "Parsequence" Playback.mkParSequenceEntry)
                   id
 
 
