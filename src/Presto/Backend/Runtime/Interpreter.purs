@@ -206,10 +206,8 @@ interpret brt@(BackendRuntime rt) (ParSequence aflow rrItemDict next) = do
   res <- withRunModeClassless brt rrItemDict $ (lift3 $ parSequence $ foldl (flowToAff st rt) [] aflow)
   pure $ next $ res 
   where
-      flowToAff st rt acc flow =  (liftM1 fn (E.runExceptT (S.runStateT (R.runReaderT (runBackend brt flow) rt) st))   ) : acc
-
-      -- fn :: forall a st. CustomEitherEx Error ParError a => (Either (Tuple Error st) (Tuple a st)) -> (EitherEx ParError a)
-      fn = toCustomEitherEx <<< either (Left <<< fst) (Right <<< fst)
+      flowToAff st rt acc flow =  (liftM1 transfromToEitherEx (E.runExceptT (S.runStateT (R.runReaderT (runBackend brt flow) rt) st))   ) : acc
+      transfromToEitherEx = toCustomEitherEx <<< either (Left <<< fst) (Right <<< fst)
 
 interpret brt (RunSysCmd cmd rrItemDict next) = do
   res <- withRunModeClassless brt rrItemDict
