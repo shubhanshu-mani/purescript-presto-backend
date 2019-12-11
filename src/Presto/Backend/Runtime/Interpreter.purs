@@ -26,7 +26,7 @@ module Presto.Backend.Runtime.Interpreter
 
 import Prelude
 
-import Control.Monad.Aff (forkAff)
+import Control.Monad.Aff (forkAff, Aff)
 import Control.Monad.Aff.AVar (makeVar, putVar, readVar, takeVar)
 import Control.Monad.Aff.Class (liftAff)
 import Control.Monad.Eff.Class (liftEff)
@@ -46,8 +46,9 @@ import Data.UUID (genUUID)
 import Presto.Backend.DB.Mock.Types (DBActionDict)
 import Presto.Backend.Flow (BackendFlow, BackendFlowCommands(..), BackendFlowCommandsWrapper, BackendFlowWrapper(..))
 import Presto.Backend.Language.Types.DB (SqlConn(..))
-import Presto.Backend.Language.Types.EitherEx (fromEitherEx)
+import Presto.Backend.Language.Types.EitherEx (EitherEx(..), eitherEx, fromEitherEx, toEitherEx, toCustomEitherEx, class CustomEitherEx)
 import Presto.Backend.Language.Types.MaybeEx (fromMaybeEx, toMaybeEx)
+import Presto.Backend.Language.Types.ParSequence (ParError(..))
 import Presto.Backend.Language.Types.UnitEx (UnitEx(UnitEx))
 import Presto.Backend.Playback.Entries (mkThrowExceptionEntry)
 import Presto.Backend.Playback.Machine.Classless (withRunModeClassless)
@@ -58,6 +59,7 @@ import Presto.Backend.Runtime.KVDBInterpreter (runKVDB)
 import Presto.Backend.Runtime.Types (InterpreterMT, InterpreterMT', BackendRuntime(..), RunningMode(..))
 import Presto.Backend.Runtime.Types as X
 import Presto.Backend.SystemCommands (runSysCmd)
+import Presto.Backend.Language.Types.ParSequence (ParError)
 
 forkF :: forall eff rt st a. BackendRuntime -> BackendFlow st rt a -> InterpreterMT rt st (Tuple Error st) eff Unit
 forkF brt flow = do
@@ -196,15 +198,16 @@ interpret brt@(BackendRuntime rt) (Fork flow flowGUID rrItemDict next) = do
       (case mbForkedRt of
         Nothing -> (lift3 (rt.logRunner flowGUID "Failed to fork flow.") *> pure UnitEx)
         Just forkedBrt -> forkF forkedBrt flow *> pure UnitEx)
-
   pure $ next UnitEx
 
-interpret brt@(BackendRuntime rt) (ParSequence aflow next) = do
+interpret brt@(BackendRuntime rt) (ParSequence aflow rrItemDict next) = do
   st ← R.lift S.get
   rt ← R.ask
-  (next <<< map (either (Left <<< fst) (Right <<< fst))) <$> (lift3 $ parSequence $ foldl (flowToAff st rt) [] aflow)
+  res <- withRunModeClassless brt rrItemDict $ (lift3 $ parSequence $ foldl (flowToAff st rt) [] aflow)
+  pure $ next $ res 
   where
-      flowToAff st rt acc flow = E.runExceptT (S.runStateT (R.runReaderT (runBackend brt flow) rt) st) : acc
+      flowToAff st rt acc flow =  (liftM1 transfromToEitherEx (E.runExceptT (S.runStateT (R.runReaderT (runBackend brt flow) rt) st))   ) : acc
+      transfromToEitherEx = toCustomEitherEx <<< either (Left <<< fst) (Right <<< fst)
 
 interpret brt (RunSysCmd cmd rrItemDict next) = do
   res <- withRunModeClassless brt rrItemDict

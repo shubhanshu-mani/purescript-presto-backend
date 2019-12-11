@@ -22,30 +22,22 @@
 module Presto.Backend.Playback.Entries where
 
 import Prelude
-import Presto.Backend.Playback.Types
-import Data.Either (Either(..), note, hush, isLeft)
-import Data.Foreign.Class (class Encode, class Decode, encode, decode)
-import Data.Foreign (Foreign)
-import Data.Foreign.Generic (defaultOptions, genericDecode, genericDecodeJSON, genericEncode, genericEncodeJSON, encodeJSON, decodeJSON)
-import Data.Foreign.Generic.Class (class GenericDecode, class GenericEncode)
-import Data.Foreign.Generic.Types (Options, SumEncoding(..))
-import Data.Generic.Rep.Show as GShow
-import Data.Generic.Rep (class Generic)
-import Data.Maybe (Maybe(..), isJust)
-import Data.Newtype (class Newtype)
-import Data.Tuple (Tuple(..))
-import Presto.Backend.Runtime.Common (jsonStringify)
-import Presto.Backend.Types (BackendAff)
-import Presto.Backend.Types.API (APIResult(..), ErrorPayload, ErrorResponse, Response)
-import Presto.Backend.Types.Options (class OptionEntity)
-import Presto.Core.Utils.Encoding (defaultDecode, defaultEncode, defaultEnumDecode, defaultEnumEncode)
-import Prelude (class Eq, bind, pure, ($), (<$>), (<<<), (==))
 
 import Control.Monad.Except (runExcept) as E
-import Presto.Backend.Language.Types.EitherEx (EitherEx(..))
-import Presto.Backend.Language.Types.MaybeEx (MaybeEx(..))
-import Presto.Backend.Language.Types.UnitEx (UnitEx(..))
+import Data.Either (hush, either)
+import Data.Foreign (Foreign)
+import Data.Foreign.Class (class Encode, class Decode, encode, decode)
+import Data.Foreign.Generic (defaultOptions, genericDecode, genericEncode, encodeJSON, decodeJSON)
+import Data.Generic.Rep (class Generic)
+import Data.Generic.Rep.Show as GShow
+import Data.Maybe (Maybe(..))
 import Presto.Backend.Language.Types.DB (DBError, KVDBConn(MockedKVDB, Redis), MockedKVDBConn(MockedKVDBConn), MockedSqlConn(MockedSqlConn), SqlConn(MockedSql, Sequelize))
+import Presto.Backend.Language.Types.EitherEx (EitherEx(RightEx, LeftEx))
+import Presto.Backend.Language.Types.MaybeEx (MaybeEx)
+import Presto.Backend.Language.Types.ParSequence (ParError(..))
+import Presto.Backend.Language.Types.UnitEx (UnitEx(..))
+import Presto.Backend.Playback.Types (class MockedResult, class RRItem, RecordingEntry(..))
+import Presto.Backend.Types.API (ErrorPayload, ErrorResponse, Response)
 
 data SetOptionEntry = SetOptionEntry
   { key   :: String
@@ -122,6 +114,9 @@ data RunKVDBSimpleEntry = RunKVDBSimpleEntry
   , params     :: String
   , jsonResult :: Foreign
   }
+data ParSequenceEntry = ParSequenceEntry
+  { jsonResult  :: Array (EitherEx ParError Foreign)
+  }
 
 mkSetOptionEntry :: String -> String -> UnitEx -> SetOptionEntry
 mkSetOptionEntry key value _ = SetOptionEntry {key, value}
@@ -160,6 +155,17 @@ mkCallAPIEntry jReqF aRes = CallAPIEntry
   { jsonRequest : jReqF unit
   , jsonResult  : encode <$> aRes
   }
+
+mkParSequenceEntry
+  :: forall b
+    . Encode b
+  => Decode b
+  => Array (EitherEx ParError b)
+  -> ParSequenceEntry
+mkParSequenceEntry output = ParSequenceEntry
+  { jsonResult : encode <$$> output
+  }
+
 
 mkForkFlowEntry :: String -> String -> UnitEx -> ForkFlowEntry
 mkForkFlowEntry description guid _ = ForkFlowEntry { description, guid }
@@ -450,3 +456,32 @@ instance rrItemRunKVDBSimpleEntry :: RRItem RunKVDBSimpleEntry where
 
 instance mockedResultRunKVDBSimpleEntry :: Decode b => MockedResult RunKVDBSimpleEntry b where
     parseRRItem (RunKVDBSimpleEntry r) = hush $ E.runExcept $ decode r.jsonResult
+
+derive instance genericParSequenceEntry :: Generic ParSequenceEntry _
+instance eqParSequenceEntry :: Eq ParSequenceEntry where
+  eq e1 e2 = encodeJSON e1 == encodeJSON e2
+instance showParSequenceEntry   :: Show ParSequenceEntry where show = encodeJSON
+instance decodeParSequenceEntry :: Decode ParSequenceEntry where decode = genericDecode defaultOptions
+instance encodeParSequenceEntry :: Encode ParSequenceEntry where encode = genericEncode defaultOptions
+instance rrItemParSequenceEntry :: RRItem ParSequenceEntry where
+  toRecordingEntry rrItem idx mode = (RecordingEntry idx mode "ParSequenceEntry") <<< encodeJSON $ rrItem
+  fromRecordingEntry (RecordingEntry idx mode entryName re) = hush $ E.runExcept $ decodeJSON re
+  getTag   _ = "ParSequenceEntry"
+instance mockedResultParSequenceEntry :: Decode b => MockedResult ParSequenceEntry (Array (EitherEx ParError b)) where
+  parseRRItem (ParSequenceEntry r) = Just $
+    runDecodeMock <$> r.jsonResult
+
+runDecodeMock ::forall b. Decode b => EitherEx ParError Foreign -> EitherEx ParError b
+runDecodeMock = case _ of
+  LeftEx  errResp -> LeftEx errResp
+  RightEx strResp -> 
+    either
+      (const (LeftEx $ ParError "Decode Failed"))
+      RightEx
+      $ E.runExcept $ decode strResp 
+
+mapmap :: forall f g a b. Functor f => Functor g =>
+  (a -> b) -> f (g a) -> f (g b)
+mapmap = (<$>) <<< (<$>)
+
+infix 2 mapmap as <$$>
