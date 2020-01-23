@@ -277,9 +277,9 @@ parSequenceRecorderRt
   -> InterpreterMT' rt st eff RecorderRuntime
 parSequenceRecorderRt parseqGUID rt = do
   recordingVar <- lift3 $ makeVar []
-  forkedRecs   <- lift3 $ takeVar rt.forkedRecordingsVar
-  let forkedRecs' = StrMap.insert parseqGUID recordingVar forkedRecs
-  lift3 $ putVar forkedRecs' rt.forkedRecordingsVar
+  parseqRecs   <- lift3 $ takeVar rt.parSeqRecordingsVar
+  let parseqRecs' = StrMap.insert parseqGUID recordingVar parseqRecs
+  lift3 $ putVar parseqRecs' rt.parSeqRecordingsVar
   pure
     { flowGUID : ""
     , parseqGUID
